@@ -24,3 +24,4 @@
 - `MAGENTO_BACKEND_FRONTNAME` (np. `admin`)
 - `MAGENTO_ADMIN_FIRSTNAME` (np. `Admin`)
 - `MAGENTO_ADMIN_LASTNAME` (np. `User`)
+- `MAGENTO_APP_REPO` (opcjonalnie, domyślnie `git@github.com:grzegorzrzeznikiewicz/magento-demo.git`)
