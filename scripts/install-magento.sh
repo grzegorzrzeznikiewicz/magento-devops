@@ -16,7 +16,7 @@ set +a
 MAGENTO_PHP_MEMORY_LIMIT="${MAGENTO_PHP_MEMORY_LIMIT:-2G}"
 
 echo "[install] Preparing writable Magento runtime directories..."
-${DOCKER_CMD} exec -u 0 magento_php bash -lc "cd /var/www/html && mkdir -p var/cache var/page_cache generated pub/static pub/media app/etc && chown -R www-data:www-data var generated pub/static pub/media app/etc"
+./scripts/fix-runtime-permissions.sh
 
 echo "[install] Installing PHP dependencies (composer install)..."
 ${DOCKER_CMD} exec magento_php bash -lc "cd /var/www/html && composer install --no-interaction --prefer-dist"
@@ -37,7 +37,7 @@ if ${DOCKER_CMD} exec magento_php test -f /var/www/html/app/etc/env.php; then
 fi
 
 echo "[install] Running Magento setup:install"
-${DOCKER_CMD} exec magento_php bash -lc "cd /var/www/html && php -d memory_limit=${MAGENTO_PHP_MEMORY_LIMIT} bin/magento setup:install \
+${DOCKER_CMD} exec magento_php bash -lc "cd /var/www/html && su -s /bin/sh www-data -c \"php -d memory_limit=${MAGENTO_PHP_MEMORY_LIMIT} bin/magento setup:install \
   --base-url='${MAGENTO_BASE_URL}' \
   --db-host='mariadb' \
   --db-name='${MYSQL_DATABASE}' \
@@ -56,10 +56,10 @@ ${DOCKER_CMD} exec magento_php bash -lc "cd /var/www/html && php -d memory_limit
   --search-engine='opensearch' \
   --opensearch-host='opensearch' \
   --opensearch-port='9200' \
-  --opensearch-index-prefix='magento'"
+  --opensearch-index-prefix='magento'\""
 
 echo "[install] Enabling production mode"
-${DOCKER_CMD} exec magento_php bash -lc "cd /var/www/html && php -d memory_limit=${MAGENTO_PHP_MEMORY_LIMIT} bin/magento deploy:mode:set production -s"
-${DOCKER_CMD} exec magento_php bash -lc "cd /var/www/html && php -d memory_limit=${MAGENTO_PHP_MEMORY_LIMIT} bin/magento setup:static-content:deploy -f en_US"
-${DOCKER_CMD} exec magento_php bash -lc "cd /var/www/html && php -d memory_limit=${MAGENTO_PHP_MEMORY_LIMIT} bin/magento cache:flush"
-${DOCKER_CMD} exec -u 0 magento_php bash -lc "cd /var/www/html && chown -R www-data:www-data var generated pub/static pub/media app/etc"
+${DOCKER_CMD} exec magento_php bash -lc "cd /var/www/html && su -s /bin/sh www-data -c 'php -d memory_limit=${MAGENTO_PHP_MEMORY_LIMIT} bin/magento deploy:mode:set production -s'"
+${DOCKER_CMD} exec magento_php bash -lc "cd /var/www/html && su -s /bin/sh www-data -c 'php -d memory_limit=${MAGENTO_PHP_MEMORY_LIMIT} bin/magento setup:static-content:deploy -f en_US'"
+${DOCKER_CMD} exec magento_php bash -lc "cd /var/www/html && su -s /bin/sh www-data -c 'php -d memory_limit=${MAGENTO_PHP_MEMORY_LIMIT} bin/magento cache:flush'"
+./scripts/fix-runtime-permissions.sh

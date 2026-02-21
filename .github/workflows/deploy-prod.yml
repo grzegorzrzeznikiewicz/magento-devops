@@ -125,3 +125,12 @@ jobs:
             echo "${{ secrets.VM1_PASSWORD }}" | sudo -S docker compose up -d
             DOCKER_CMD="sudo docker" ./scripts/deploy-app.sh
             ./scripts/install-backup-cron.sh
+            MODE=$(echo "${{ secrets.VM1_PASSWORD }}" | sudo -S docker exec magento_php php -d memory_limit=2G /var/www/html/bin/magento deploy:mode:show | tr -d '\r')
+            echo "$MODE"
+            echo "$MODE" | grep -qi "production"
+            crontab -l | grep -q "^# BEGIN MAGENTO_DEVOPS$"
+            BASE_URL="${{ vars.MAGENTO_BASE_URL }}"
+            ADMIN_PATH="${{ vars.MAGENTO_BACKEND_FRONTNAME }}"
+            BASE_URL="${BASE_URL%/}"
+            curl -skfI "${BASE_URL}/" >/dev/null
+            curl -skfI "${BASE_URL}/${ADMIN_PATH}/" >/dev/null
