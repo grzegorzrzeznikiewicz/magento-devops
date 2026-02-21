@@ -1,0 +1,85 @@
+name: magento-devops
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: magento_nginx
+    depends_on:
+      - php-fpm
+    ports:
+      - "8080:80"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./app:/var/www/html
+    restart: unless-stopped
+
+  php-fpm:
+    image: ${MAGENTO_PHP_IMAGE:-magento-demo-php:local}
+    build:
+      context: ./docker/magento
+      args:
+        MAGENTO_VERSION: ${MAGENTO_VERSION:-2.4.8-p3}
+    container_name: magento_php
+    depends_on:
+      - mariadb
+      - redis
+      - opensearch
+    environment:
+      COMPOSER_PUBLIC_KEY: ${COMPOSER_PUBLIC_KEY}
+      COMPOSER_PRIVATE_KEY: ${COMPOSER_PRIVATE_KEY}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
+    volumes:
+      - ./app:/var/www/html
+    restart: unless-stopped
+
+  mariadb:
+    image: mariadb:11.4
+    container_name: magento_db
+    environment:
+      MARIADB_DATABASE: ${MYSQL_DATABASE}
+      MARIADB_USER: ${MYSQL_USER}
+      MARIADB_PASSWORD: ${MYSQL_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    command: >
+      --transaction-isolation=READ-COMMITTED
+      --binlog-format=ROW
+      --innodb-buffer-pool-size=2G
+    volumes:
+      - magento_db:/var/lib/mysql
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: magento_redis
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - magento_redis:/data
+    restart: unless-stopped
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.3
+    container_name: magento_opensearch
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms4g -Xmx4g
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - magento_opensearch:/usr/share/opensearch/data
+    restart: unless-stopped
+
+volumes:
+  magento_db:
+  magento_redis:
+  magento_opensearch:

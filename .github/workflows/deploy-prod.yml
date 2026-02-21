@@ -1,0 +1,127 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: meta
+        run: echo "image_tag=sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push PHP image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker/magento
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/magento-php:${{ steps.meta.outputs.image_tag }}
+            ghcr.io/${{ github.repository }}/magento-php:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      MAGENTO_APP_REPO: ${{ vars.MAGENTO_APP_REPO }}
+    steps:
+      - name: Prepare target directory permissions
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM1_HOST }}
+          username: ${{ secrets.VM1_USER }}
+          password: ${{ secrets.VM1_PASSWORD }}
+          port: ${{ secrets.VM1_PORT }}
+          script: |
+            mkdir -p ~/apps/magento-devops
+            echo "${{ secrets.VM1_PASSWORD }}" | sudo -S chown -R $USER:$USER ~/apps/magento-devops
+
+      - uses: actions/checkout@v4
+
+      - name: Sync deployment files to VM1
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM1_HOST }}
+          username: ${{ secrets.VM1_USER }}
+          password: ${{ secrets.VM1_PASSWORD }}
+          port: ${{ secrets.VM1_PORT }}
+          source: "docker-compose.yml,docker,scripts,README.md,docs"
+          target: "~/apps/magento-devops"
+          overwrite: true
+
+      - name: Deploy to VM1 over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM1_HOST }}
+          username: ${{ secrets.VM1_USER }}
+          password: ${{ secrets.VM1_PASSWORD }}
+          port: ${{ secrets.VM1_PORT }}
+          envs: MAGENTO_APP_REPO
+          script: |
+            set -e
+            cd ~/apps/magento-devops
+
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "${{ secrets.VM1_PASSWORD }}" | sudo -S apt-get update
+              echo "${{ secrets.VM1_PASSWORD }}" | sudo -S apt-get install -y ca-certificates curl gnupg
+              echo "${{ secrets.VM1_PASSWORD }}" | sudo -S install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.asc
+              echo "${{ secrets.VM1_PASSWORD }}" | sudo -S gpg --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.asc
+              echo "${{ secrets.VM1_PASSWORD }}" | sudo -S chmod a+r /etc/apt/keyrings/docker.gpg
+              ARCH=$(dpkg --print-architecture)
+              CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+              echo "${{ secrets.VM1_PASSWORD }}" | sudo -S bash -lc "echo 'deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${CODENAME} stable' > /etc/apt/sources.list.d/docker.list"
+              echo "${{ secrets.VM1_PASSWORD }}" | sudo -S apt-get update
+              echo "${{ secrets.VM1_PASSWORD }}" | sudo -S apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            fi
+
+            APP_REPO="${MAGENTO_APP_REPO:-git@github.com:grzegorzrzeznikiewicz/magento-demo.git}"
+            if [ ! -d app/.git ]; then
+              git clone "$APP_REPO" app
+            else
+              git -C app fetch origin main
+              git -C app reset --hard origin/main
+            fi
+
+            cat > .env << 'EOF'
+            MAGENTO_VERSION=${{ vars.MAGENTO_VERSION }}
+            MAGENTO_PHP_IMAGE=ghcr.io/${{ github.repository }}/magento-php:${{ needs.build-and-push.outputs.image_tag }}
+            MAGENTO_BASE_URL=${{ vars.MAGENTO_BASE_URL }}
+            MAGENTO_BACKEND_FRONTNAME=${{ vars.MAGENTO_BACKEND_FRONTNAME }}
+            MAGENTO_ADMIN_FIRSTNAME=${{ vars.MAGENTO_ADMIN_FIRSTNAME }}
+            MAGENTO_ADMIN_LASTNAME=${{ vars.MAGENTO_ADMIN_LASTNAME }}
+            COMPOSER_PUBLIC_KEY=${{ secrets.COMPOSER_PUBLIC_KEY }}
+            COMPOSER_PRIVATE_KEY=${{ secrets.COMPOSER_PRIVATE_KEY }}
+            MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
+            MYSQL_USER=${{ secrets.MYSQL_USER }}
+            MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+            MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+            OPENSEARCH_INITIAL_ADMIN_PASSWORD=${{ secrets.OPENSEARCH_INITIAL_ADMIN_PASSWORD }}
+            MAGENTO_ADMIN_USER=${{ secrets.MAGENTO_ADMIN_USER }}
+            MAGENTO_ADMIN_PASSWORD=${{ secrets.MAGENTO_ADMIN_PASSWORD }}
+            MAGENTO_ADMIN_EMAIL=${{ secrets.MAGENTO_ADMIN_EMAIL }}
+            EOF
+
+            echo "${{ secrets.VM1_PASSWORD }}" | sudo -S docker login ghcr.io -u "${{ github.repository_owner }}" -p "${{ secrets.GHCR_PAT }}"
+            echo "${{ secrets.VM1_PASSWORD }}" | sudo -S docker compose pull php-fpm || true
+            echo "${{ secrets.VM1_PASSWORD }}" | sudo -S docker compose up -d
+            DOCKER_CMD="sudo docker" ./scripts/deploy-app.sh
+            ./scripts/install-backup-cron.sh

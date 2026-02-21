@@ -1,0 +1,56 @@
+name: Rollback Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag obrazu do rollbacku (np. sha-<commit>)"
+        required: true
+        type: string
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare target directory permissions
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM1_HOST }}
+          username: ${{ secrets.VM1_USER }}
+          password: ${{ secrets.VM1_PASSWORD }}
+          port: ${{ secrets.VM1_PORT }}
+          script: |
+            mkdir -p ~/apps/magento-devops
+            echo "${{ secrets.VM1_PASSWORD }}" | sudo -S chown -R $USER:$USER ~/apps/magento-devops
+
+      - uses: actions/checkout@v4
+
+      - name: Sync deployment files to VM1
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM1_HOST }}
+          username: ${{ secrets.VM1_USER }}
+          password: ${{ secrets.VM1_PASSWORD }}
+          port: ${{ secrets.VM1_PORT }}
+          source: "docker-compose.yml,docker,scripts,README.md,docs"
+          target: "~/apps/magento-devops"
+          overwrite: true
+
+      - name: Rollback on VM1 over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM1_HOST }}
+          username: ${{ secrets.VM1_USER }}
+          password: ${{ secrets.VM1_PASSWORD }}
+          port: ${{ secrets.VM1_PORT }}
+          script: |
+            set -e
+            cd ~/apps/magento-devops
+            echo "${{ secrets.VM1_PASSWORD }}" | sudo -S docker login ghcr.io -u "${{ github.repository_owner }}" -p "${{ secrets.GHCR_PAT }}"
+            if grep -q '^MAGENTO_PHP_IMAGE=' .env; then
+              sed -i "s|^MAGENTO_PHP_IMAGE=.*|MAGENTO_PHP_IMAGE=ghcr.io/${{ github.repository }}/magento-php:${{ inputs.image_tag }}|" .env
+            else
+              echo "MAGENTO_PHP_IMAGE=ghcr.io/${{ github.repository }}/magento-php:${{ inputs.image_tag }}" >> .env
+            fi
+            echo "${{ secrets.VM1_PASSWORD }}" | sudo -S docker compose pull php-fpm || true
+            echo "${{ secrets.VM1_PASSWORD }}" | sudo -S docker compose up -d --force-recreate
