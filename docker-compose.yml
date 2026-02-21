@@ -81,5 +81,8 @@ services:
 
 volumes:
   magento_db:
+    name: magento-demo_magento_db
   magento_redis:
+    name: magento-demo_magento_redis
   magento_opensearch:
+    name: magento-demo_magento_opensearch
